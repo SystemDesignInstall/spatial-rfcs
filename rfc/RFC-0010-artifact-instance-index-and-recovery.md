@@ -69,6 +69,9 @@ previously displaced index records.
    duplicate primary publication, lost identity or a partially visible
    observation. The DB transaction and filesystem publication protocol must
    explicitly address their separate failure points.
+7. Garbage collection must preserve a shared CAS payload while any live
+   instance, observation or dependency still refers to it, and must not delete
+   another instance's manifest as a side effect of removing one instance.
 
 ### Versioned migration
 
