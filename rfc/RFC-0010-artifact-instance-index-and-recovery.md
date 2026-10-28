@@ -52,8 +52,8 @@ previously displaced index records.
 2. A CAS hash continues to identify one immutable byte payload. Existing CAS
    paths and manifest JSON stay compatible; no image bytes are duplicated.
 3. `FindArtifactById` resolves every indexed instance independently.
-   `FindArtifactsByType` returns every instance. A hash lookup returning one
-   instance must have deterministic documented selection; it must not be used
+   `FindArtifactsByType` returns every instance. `FindArtifactByHash` returns the
+   stable primary instance recorded in the payload index; it must not be used
    to assert which observation an instance belongs to.
 4. `Put` remains content-deduplicating and returns an existing appropriate
    instance when its documented conditions hold. `PutInstance` publishes a
@@ -71,17 +71,26 @@ previously displaced index records.
 The proposed migration, tentatively `0009`, changes the `artifacts` table from
 one row per content hash to one row per instance: retain the primary key on
 `artifact_id`, remove the uniqueness constraint on `content_hash`, and retain a
-non-unique hash index. Preserve each existing row's UUID, hash, type, schema
+non-unique hash index. Add `artifact_payload_index` with one primary instance ID
+per content hash, enforced by a hash primary key and a composite foreign key
+to the matching `(artifact_id, content_hash)` in `artifacts`. The primary is an
+index-selection rule, not a claim that the instance is the earliest capture.
+Initialize it from each existing legacy row. Preserve each row's UUID, hash, type, schema
 version, producer, configuration, timestamps, units and validation status.
 The migration must be transactional, verify foreign-key integrity, support an
 unchanged legacy project, and leave the database at its prior version if it
 fails. Do not edit historical migrations in place.
 
-The implementation must define atomic and deterministic `Put` behavior under
-concurrent calls. If an additional payload-identity index/table or a partial
-unique index is necessary to preserve it, include it in the reviewed migration
-and test its upgrade and recovery behavior. The SQL above is a data-model
-direction, not a complete concurrent publication algorithm.
+`Put` must serialize its check-and-insert in a project/connection-scoped writer
+transaction, re-check the payload index after acquiring the writer lock, and
+return the recorded primary when it already exists. `PutInstance` inserts an
+independent row and does not change the payload index. Replace the destructive
+`INSERT OR REPLACE` use for instance creation with conflict-detecting insertion;
+validation-status changes use an explicit update. Existing outer host
+transactions must be supported without transaction interleaving or a nested
+`BEGIN`; lock ownership and savepoints must be reviewed and tested. The
+filesystem cannot participate in SQLite's atomic commit, so orphaned files are
+reported and handled by the separate crash-recovery protocol.
 
 Moving to the new schema does **not** automatically restore rows that were
 already displaced. Migration must not silently read arbitrary files or infer
@@ -103,9 +112,12 @@ A separate explicitly requested repair may restore only verified missing index
 records, preserving the original UUID, content hash and manifest metadata.
 It must never rewrite the observation, create a replacement UUID, invent missing
 provenance, overwrite a conflicting record, or treat a hash as proof of a
-physical measurement. Unknown metadata remains unknown; in particular an
-unrecoverable nanosecond creation timestamp must not be fabricated from a
-second-resolution manifest. Report every restored, skipped and conflicted
+physical measurement. Unknown metadata remains unknown. Store an unrecoverable
+nanosecond creation timestamp as SQL `NULL`; update typed read APIs to represent
+it as optional rather than reporting epoch zero. A recoverable instance is
+inserted without changing an existing primary payload index. If a hash has no
+indexed primary, report it for manual handling rather than inventing one.
+Report every restored, skipped and conflicted
 record; make repair transactional and idempotent. Validate UUID/hash syntax and
 path boundaries before reading files. No automatic repair on project open.
 
@@ -131,22 +143,20 @@ path boundaries before reading files. No automatic repair on project open.
    and does not provide transactional repair.
 3. Store UUID aliases in unrelated JSON or dependency fields: rejected because
    it creates an undocumented second index and fragile consistency rules.
-4. Keep a one-hash payload table and add a separate instance table: viable
-   alternative if the Architecture Review finds it safer for concurrency and
-   long-term normalization. It must meet the same identity, migration,
-   compatibility and recovery requirements.
+4. Keep only a non-unique instance table and select any row on hash lookup:
+   rejected because concurrent `Put` calls can create competing primary
+   instances and an unordered lookup makes selection unstable. The dedicated
+   payload index separates those concerns.
 
-## Open Questions
+## Review checkpoints
 
-1. Should payload identity and instances become separate normalized tables in
-   this migration, or should `artifacts` remain a single non-unique-hash table
-   with a dedicated uniqueness mechanism for `Put`?
-2. How should unknown recovered timestamps be represented by existing typed
-   metadata APIs without conflating unknown with Unix epoch zero?
-3. Which manifest fields are mandatory for automatic recovery, and how should
-   conflicting but otherwise readable legacy manifests be escalated?
-4. What fault-injection and Windows filesystem guarantees are required to close
-   the remaining CAS/SQLite crash-recovery gap?
+Architecture Review must inspect the complete legacy-table copy, lock ownership,
+outer-transaction behavior, exact mandatory manifest fields for recovery, and
+Windows filesystem failure behavior. Conflicts or insufficient provenance are
+reported for manual handling; they are not grounds to invent a record. The
+prototype under `experimental/` demonstrates the proposed database identity
+and explicit recovery mechanics, but does not establish a production-ready
+migration or cross-filesystem crash safety.
 
 ## Impact
 
