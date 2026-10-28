@@ -19,6 +19,10 @@ identity. Neither is a substitute for the other.
 This is a draft, not authorization to implement or run the migration. It must
 pass Architecture Review and be ratified under the Constitution before protected
 implementation changes are made.
+The existing `check_constitution.py` previously checked only the shape of an RFC
+reference, not whether it existed or was ratified. A separate implementation
+change is proposed to check status; neither that check nor an RFC identifier
+alone substitutes for an Architecture Review of the change's scope.
 
 ## Motivation
 
