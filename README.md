@@ -84,3 +84,4 @@ proposal → draft → proposed → accepted → ratified → superseded
 | RFC-0007 | Feature extraction capability |
 | RFC-0008 | Production reconstruction backend architecture |
 | RFC-0009 | Calibration artifact & canonical camera calibration model |
+| RFC-0010 | Artifact instance index and recovery — draft |
